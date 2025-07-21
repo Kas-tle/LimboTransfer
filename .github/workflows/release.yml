@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.release.outputs.releaseID }}
+    steps:
+      - name: Set up JDK 17
+        # See https://github.com/actions/setup-java/releases/latest
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        with:
+          java-version: 17
+          distribution: temurin
+      - name: Checkout repository
+        # See https://github.com/actions/checkout/releases/latest
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Setup Gradle
+        # See https://github.com/gradle/actions/releases/latest
+        uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96
+      - name: Build LimboTransfer
+        run: ./gradlew build
+      - name: Archive artifact
+        # See https://github.com/actions/upload-artifact/releases/latest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: success()
+        with:
+          name: LimboTransfer
+          path: build/libs/LimboTransfer.jar
+          if-no-files-found: error
+      - name: Make release
+        id: release
+        # See https://github.com/Kas-tle/base-release-action/releases/latest
+        uses: Kas-tle/base-release-action@65d06f835be34757c6d73c16959c97e92c2a3c7f
+        with:
+          files: |
+            build/libs/LimboTransfer.jar
+          appID: ${{ secrets.RELEASE_APP_ID }}
+          appPrivateKey: ${{ secrets.RELEASE_APP_PK }}
+          discordWebhook: ${{ secrets.DISCORD_WEBHOOK }}
+
+  upload-logs:
+    name: Upload Logs
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      # See https://github.com/Kas-tle/release-build-log-action/releases/latest
+    - uses: Kas-tle/release-build-log-action@1b57448eaf9476e6e05450e4ea240449eac2c0d2
+      with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        releaseID: ${{ needs.release.outputs.release_id }}
