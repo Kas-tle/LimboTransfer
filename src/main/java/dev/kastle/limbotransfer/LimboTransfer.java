@@ -4,6 +4,10 @@ import com.loohp.limbo.Limbo;
 import com.loohp.limbo.commands.CommandExecutor;
 import com.loohp.limbo.commands.CommandSender;
 import com.loohp.limbo.commands.TabCompletor;
+import com.loohp.limbo.events.EventHandler;
+import com.loohp.limbo.events.Listener;
+import com.loohp.limbo.events.player.PlayerJoinEvent;
+import com.loohp.limbo.events.player.PlayerQuitEvent;
 import com.loohp.limbo.network.ClientConnection;
 import com.loohp.limbo.network.protocol.packets.PacketOut;
 import com.loohp.limbo.player.Player;
@@ -11,30 +15,140 @@ import com.loohp.limbo.plugins.LimboPlugin;
 import com.loohp.limbo.scheduler.LimboTask;
 import com.loohp.limbo.utils.DataTypeIO;
 import net.md_5.bungee.api.ChatColor;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
-public class LimboTransfer extends LimboPlugin {
+public class LimboTransfer extends LimboPlugin implements Listener {
+
+    public static int PLAY_TRANSFER_ID = -1;
+    public static int CONFIG_TRANSFER_ID = -1;
+
+    private final Map<UUID, TransferInfo> pendingTransfers = new ConcurrentHashMap<>();
+
     @Override
     public void onEnable() {
+        loadTransferPacketIds();
+
+        Limbo.getInstance().getEventsManager().registerEvents(this, this);
+
+        if (PLAY_TRANSFER_ID != -1) {
+            Limbo.getInstance().getConsole().sendMessage(
+                    "§a[LimboTransfer] Loaded PLAY transfer ID: " + String.format("0x%02X", PLAY_TRANSFER_ID));
+        } else {
+            Limbo.getInstance().getConsole()
+                    .sendMessage("§c[LimboTransfer] Failed to load PLAY transfer ID. Using fallback.");
+            throw new RuntimeException("Failed to load PLAY transfer ID from packets.json");
+        }
+
+        if (CONFIG_TRANSFER_ID != -1) {
+            Limbo.getInstance().getConsole().sendMessage("§a[LimboTransfer] Loaded CONFIGURATION transfer ID: "
+                    + String.format("0x%02X", CONFIG_TRANSFER_ID));
+        } else {
+            Limbo.getInstance().getConsole()
+                    .sendMessage("§c[LimboTransfer] Failed to load CONFIGURATION transfer ID. Using fallback.");
+            throw new RuntimeException("Failed to load CONFIGURATION transfer ID from packets.json");
+        }
+
         Limbo.getInstance().getPluginManager().registerCommands(this, new Commands());
     }
 
-    public void transfer(Player player, String host, int port) {
+    private void loadTransferPacketIds() {
+        try (InputStream inputStream = Limbo.class.getClassLoader().getResourceAsStream("reports/packets.json")) {
+            if (inputStream == null)
+                return;
+
+            try (InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
+                JSONObject json = (JSONObject) new JSONParser().parse(reader);
+
+                // Path: play -> clientbound -> minecraft:transfer -> protocol_id
+                PLAY_TRANSFER_ID = extractId(json, "play", "minecraft:transfer");
+
+                // Path: configuration -> clientbound -> minecraft:transfer -> protocol_id
+                CONFIG_TRANSFER_ID = extractId(json, "configuration", "minecraft:transfer");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private int extractId(JSONObject root, String phase, String packetName) {
         try {
-            ClientboundTransferPacket transferPacket = new ClientboundTransferPacket(host, port);
+            JSONObject phaseObj = (JSONObject) root.get(phase);
+            if (phaseObj == null)
+                return -1;
+
+            JSONObject clientbound = (JSONObject) phaseObj.get("clientbound");
+            if (clientbound == null)
+                return -1;
+
+            JSONObject packet = (JSONObject) clientbound.get(packetName);
+            if (packet == null)
+                return -1;
+
+            return ((Number) packet.get("protocol_id")).intValue();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    public void transfer(Player player, String host, int port) {
+        ClientConnection.ClientState state = player.clientConnection.getClientState();
+
+        if (state == ClientConnection.ClientState.LOGIN || state == ClientConnection.ClientState.HANDSHAKE) {
+            pendingTransfers.put(player.getUniqueId(), new TransferInfo(host, port));
+            Limbo.getInstance().getConsole().sendMessage(
+                    "§e[LimboTransfer] Scheduled transfer for " + player.getName() + " (State: " + state + ")");
+            return;
+        }
+
+        try {
+            int packetId;
+
+            if (state == ClientConnection.ClientState.PLAY) {
+                packetId = PLAY_TRANSFER_ID;
+            } else if (state == ClientConnection.ClientState.CONFIGURATION) {
+                packetId = CONFIG_TRANSFER_ID;
+            } else {
+                return;
+            }
+
+            ClientboundTransferPacket transferPacket = new ClientboundTransferPacket(host, port, packetId, state);
             player.clientConnection.sendPacket(transferPacket);
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        TransferInfo info = pendingTransfers.remove(player.getUniqueId());
+
+        if (info != null) {
+            Limbo.getInstance().getConsole()
+                    .sendMessage("§a[LimboTransfer] Executing scheduled transfer for " + player.getName());
+            transfer(player, info.host, info.port);
+        }
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        pendingTransfers.remove(event.getPlayer().getUniqueId());
     }
 
     public void transferAll(String host, int port, int batchDelayTicks, int batchSize) {
@@ -179,18 +293,14 @@ public class LimboTransfer extends LimboPlugin {
     class ClientboundTransferPacket extends PacketOut {
         private final String host;
         private final int port;
+        private final int packetId;
+        private final ClientConnection.ClientState state;
 
-        public ClientboundTransferPacket(String host, int port) {
+        public ClientboundTransferPacket(String host, int port, int packetId, ClientConnection.ClientState state) {
             this.host = host;
             this.port = port;
-        }
-
-        public String getHost() {
-            return host;
-        }
-
-        public int getPort() {
-            return port;
+            this.packetId = packetId;
+            this.state = state;
         }
 
         @Override
@@ -198,7 +308,7 @@ public class LimboTransfer extends LimboPlugin {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
 
             DataOutputStream output = new DataOutputStream(buffer);
-            output.writeByte(0x7A); // Transfer packet ID in Play state
+            output.writeByte(packetId); // Use the ID specific to the current phase
             DataTypeIO.writeString(output, host, StandardCharsets.UTF_8);
             DataTypeIO.writeVarInt(output, port);
 
@@ -207,7 +317,17 @@ public class LimboTransfer extends LimboPlugin {
 
         @Override
         public ClientConnection.ClientState getPacketState() {
-            return ClientConnection.ClientState.PLAY;
+            return state; // Correctly report the state this packet was intended for
+        }
+    }
+
+    private static class TransferInfo {
+        final String host;
+        final int port;
+
+        public TransferInfo(String host, int port) {
+            this.host = host;
+            this.port = port;
         }
     }
 }

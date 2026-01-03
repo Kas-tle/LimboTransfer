@@ -11,23 +11,23 @@ jobs:
     outputs:
       release_id: ${{ steps.release.outputs.releaseID }}
     steps:
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         # See https://github.com/actions/setup-java/releases/latest
-        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00
+        uses: actions/setup-java@f2beeb24e141e01a676f977032f5a29d81c9e27e
         with:
-          java-version: 17
+          java-version: 21
           distribution: temurin
       - name: Checkout repository
         # See https://github.com/actions/checkout/releases/latest
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
       - name: Setup Gradle
         # See https://github.com/gradle/actions/releases/latest
-        uses: gradle/actions/setup-gradle@ac638b010cf58a27ee6c972d7336334ccaf61c96
+        uses: gradle/actions/setup-gradle@4d9f0ba0025fe599b4ebab900eb7f3a1d93ef4c2
       - name: Build LimboTransfer
         run: ./gradlew build
       - name: Archive artifact
         # See https://github.com/actions/upload-artifact/releases/latest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         if: success()
         with:
           name: LimboTransfer
@@ -36,7 +36,7 @@ jobs:
       - name: Make release
         id: release
         # See https://github.com/Kas-tle/base-release-action/releases/latest
-        uses: Kas-tle/base-release-action@65d06f835be34757c6d73c16959c97e92c2a3c7f
+        uses: Kas-tle/base-release-action@b89ab10da9dfaa0b5fb0ca9e77679c7c7d1297f8
         with:
           files: |
             build/libs/LimboTransfer.jar

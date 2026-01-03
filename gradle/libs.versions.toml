@@ -1,5 +1,5 @@
 [versions]
-limbo = "0.7.15-ALPHA"
+limbo = "0.7.18-ALPHA"
 
 [libraries]
 limbo = { module = "com.loohp:Limbo", version.ref = "limbo" }

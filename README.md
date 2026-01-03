@@ -2,7 +2,7 @@
 
 ## Introduction
 
-LimboTransfer is a plugin for [Limbo](https://github.com/LOOHP/Limbo) that adds transfer packet functionality, allowing players to be transferred to different servers.
+You can join my [Discord](https://discord.gg/5z4GuSnqmQ) for help with this plugin. LimboTransfer is a plugin for [Limbo](https://github.com/LOOHP/Limbo) that adds transfer packet functionality, allowing players to be transferred to different servers.
 
 ## Installation
 
